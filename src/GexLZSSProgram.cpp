@@ -87,9 +87,14 @@ bool GetArgument(const ArgMap_t& map, const string& keyShort, const string& keyL
 
 void ShowHelp(const char* programName)
 {
-    printf("help: %s --input /input/compressed/file --output /output/uncompressed/file\n", programName);
+    printf("help: %s --input /input/compressed/file {--compress|--decompress} --output /output/uncompressed/file\n", programName);
     puts("  --input, -i: File to decompress");
     puts("  --output, -o: File to write to after decompressing");
+    puts("  --compress, -c: Compress input file, write into output file");
+    puts("  --decompress, -d: Decompress input file, write into output file");
+    puts("");
+    puts("Addtionally, only one of --compress or --decompress can be specified at a time.");
+    puts("");
 }
 
 int main(int argc, const char* argv[])
@@ -104,22 +109,38 @@ int main(int argc, const char* argv[])
 
     string outputPath, inputPath;
 
-    if ( !GetArgument(map, "o", "output", outputPath) || !GetArgument(map, "i", "input", inputPath) )
+    if (   !GetArgument(map, "o", "output", outputPath)
+        || !GetArgument(map, "i", "input", inputPath)
+        || !(ArgumentExists(map, "c", "compress") ^ ArgumentExists(map, "d", "decompress")))
     {
         puts("Incorrect usage!");
         ShowHelp(argv[0]);
         return EXIT_FAILURE;
     }
 
-    GexLZSS::ErrorCode_t err = GexLZSS::decompress(inputPath.c_str(), outputPath.c_str());
-    if (err != GexLZSS::ErrorCode::SUCCESS)
+    if (ArgumentExists(map, "d", "decompress"))
     {
-        puts("Error(s) when trying to decompress file!");
-        GexLZSS::PrintErrors(err);
-        return EXIT_FAILURE;
+        GexLZSS::ErrorCode_t err = GexLZSS::decompressFile(inputPath.c_str(), outputPath.c_str());
+        if (err != GexLZSS::ErrorCode::SUCCESS)
+        {
+            puts("Error(s) when trying to decompress file!");
+            GexLZSS::PrintErrors(err);
+            return EXIT_FAILURE;
+        }
+        printf("Successfully decompressed file %s and written to %s.\n", inputPath.c_str(), outputPath.c_str());
     }
 
-    printf("Successfully decompressed file %s and written to %s.\n", inputPath.c_str(), outputPath.c_str());
+    if (ArgumentExists(map, "c", "compress"))
+    {
+        GexLZSS::ErrorCode_t err = GexLZSS::compressFile(inputPath.c_str(), outputPath.c_str());
+        if (err != GexLZSS::ErrorCode::SUCCESS)
+        {
+            puts("Error(s) when trying to compress file!");
+            GexLZSS::PrintErrors(err);
+            return EXIT_FAILURE;
+        }
+        printf("Successfully compressed file %s and written to %s.\n", inputPath.c_str(), outputPath.c_str());
+    }
 
     return EXIT_SUCCESS;
 }

@@ -83,7 +83,7 @@ layout_t GetBlockTypesFromBytes(byte b1, byte b2)
 namespace GexLZSS {
 
     /// Source of original code: https://github.com/TheSerioliOfNosgoth/SoulSpiral-Official/
-    ErrorCode_t decompress(unsigned char* blockIn, int blockSize, unsigned char*& blockOut, int* optOutSizeUncompressedBlock, unsigned int optBlockInOffset)
+    ErrorCode_t decompressMemory(unsigned char* blockIn, int blockSize, unsigned char*& blockOut, int* optOutSizeUncompressedBlock, unsigned int optBlockInOffset)
     {
         FileReader reader(blockIn, blockSize + optBlockInOffset, optBlockInOffset);
         if (reader.eof() || reader.empty()) return ErrorCode::READERERROR;
@@ -141,7 +141,7 @@ namespace GexLZSS {
         return ErrorCode::SUCCESS;
     }
 
-    ErrorCode_t decompress(const char* filePathIn, const char* filePathOut)
+    ErrorCode_t decompressFile(const char* filePathIn, const char* filePathOut)
     {
         FILE* f = fopen(filePathIn, "rb");
         if (!f) return ErrorCode::FILENOTFOUND;
@@ -154,7 +154,7 @@ namespace GexLZSS {
 
         unsigned char* decompressedData = NULL;
         int sizeUncompressedFile;
-        ErrorCode_t res = decompress(data, s, decompressedData, &sizeUncompressedFile);
+        ErrorCode_t res = decompressMemory(data, s, decompressedData, &sizeUncompressedFile);
         if (decompressedData)
         {
             f = fopen(filePathOut, "wb");
@@ -165,7 +165,126 @@ namespace GexLZSS {
                 delete[] decompressedData;
             }
             else
-                res = res | ErrorCode::WRITEERROR;
+                res |= ErrorCode::WRITEERROR;
+        }
+        delete[] data;
+        return res;
+    }
+
+    const unsigned char* FindBestMatch(const unsigned char* startOfMatch, int maxBacksearchSize, int& matchSize)
+    {
+        const auto matchLength = [](const unsigned char* a, const unsigned char* b, const int maxLength) -> int
+        {
+            for(int i = 0; i < maxLength; ++i)
+            {
+                if (a[i] != b[i]) return i;
+            }
+            return maxLength;
+        };
+
+        const unsigned char* bestPtr = nullptr;
+        matchSize = 0;
+        const unsigned char* const backBuffer = startOfMatch;
+
+        for (int i = 0; i < maxBacksearchSize; ++i)
+        {
+            const int n = matchLength(startOfMatch, backBuffer - i, std::min(i, 0xF));
+            if (n > 0 && n > matchSize)
+            {
+                bestPtr = backBuffer - i;
+                matchSize = n;
+            }
+        }
+
+        return matchSize > 2 ? bestPtr : nullptr; // If it takes two byte to write one or two bytes, we might as well just copy them raw
+    }
+
+    ErrorCode_t compressMemory(unsigned char* blockIn, int blockSize, unsigned char*& blockOut, int* outSizeCompressedBlock)
+    {
+        std::vector<unsigned char> buffer;
+        unsigned char* current = blockIn;
+
+        auto eof = [&current, &blockSize, &blockIn]() -> bool
+        {
+            return (size_t)(current - blockIn) >= (size_t)blockSize;
+        };
+
+        while (!eof())
+        {
+            const size_t sectionIndex = buffer.size();
+            buffer.push_back(0);
+            buffer.push_back(0);
+
+            for(int byteIndex = 0; byteIndex < 2; ++byteIndex)
+            {
+                for(int bitIndex = 0; bitIndex < 8; ++bitIndex)
+                {
+                    if (eof())
+                    {
+                        // Fill end with zeroes so the algorithm works properly
+                        buffer.push_back(0);
+                        buffer[sectionIndex + byteIndex] >>= 1;
+                        continue;
+                    }
+
+                    int len = 0;
+                    const unsigned char* ptr = FindBestMatch(current, std::min((size_t)0xFFF, (size_t)(current - blockIn)), len);
+                    if (ptr == nullptr)
+                    {
+                        buffer.push_back(*current);
+                        ++current;
+                        buffer[sectionIndex + byteIndex] >>= 1;
+                    }
+                    else
+                    {
+                        buffer.push_back((len - 1) | ((current - ptr) & 0xF00) >> 4);
+                        buffer.push_back((current - ptr) & 0xFF);
+                        current += len;
+                        buffer[sectionIndex + byteIndex] = (buffer[sectionIndex + byteIndex] >> 1) | 0b10000000;
+                    }
+                }
+            }
+        }
+
+        blockOut = new unsigned char[buffer.size()];
+        if (!blockOut)
+        {
+            return ErrorCode::OUTOFMEMORY;
+        }
+
+        if (outSizeCompressedBlock)
+            *outSizeCompressedBlock = (int)buffer.size();
+
+        memcpy(blockOut, buffer.data(), buffer.size());
+
+        return ErrorCode::SUCCESS;
+    }
+
+    ErrorCode_t compressFile(const char* filePathIn, const char* filePathOut)
+    {
+        FILE* f = fopen(filePathIn, "rb");
+        if (!f) return ErrorCode::FILENOTFOUND;
+        fseek(f, 0, SEEK_END);
+        size_t s = ftell(f);
+        rewind(f);
+        unsigned char* data = new unsigned char[s];
+        fread(data, s, 1, f);
+        fclose(f);
+
+        unsigned char* compressedData = NULL;
+        int sizeCompressedFile;
+        ErrorCode_t res = compressMemory(data, s, compressedData, &sizeCompressedFile);
+        if (compressedData)
+        {
+            f = fopen(filePathOut, "wb");
+            if (f)
+            {
+                fwrite(compressedData, sizeCompressedFile, 1, f);
+                fclose(f);
+                delete[] compressedData;
+            }
+            else
+                res |= ErrorCode::WRITEERROR;
         }
         delete[] data;
         return res;
@@ -175,12 +294,13 @@ namespace GexLZSS {
         "No error.",
         "Input file can not be opened.",
         "Reader failed to initialize with given data.",
-        "Output file could not be written to."
+        "Output file could not be written to.",
+        "Memory could not be allocated for output buffer."
     };
 
     void PrintErrors(ErrorCode_t error)
     {
-        if (error == 0)
+        if (error == ErrorCode::SUCCESS)
         {
             puts(ERROR_MESSAGES[0]);
             return;

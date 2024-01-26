@@ -59,13 +59,13 @@ int main()
 {
     constexpr size_t hashToMatch = 0x01358066;
     
-    GexLZSS::decompress("./warning.tim.bin", "./warning1.tim");
+    GexLZSS::decompressFile("./warning.tim.bin", "./warning1.tim");
 
     BIGFILE_t* bigfile = (BIGFILE_t*)readFile("./bigfile.dat");
     
     unsigned char* b = NULL;
     int uncompressed_size;
-    GexLZSS::decompress((unsigned char*)bigfile, bigfile->entries[1].compressed_size, b, &uncompressed_size, bigfile->entries[1].fileOffset);
+    GexLZSS::decompressMemory((unsigned char*)bigfile, bigfile->entries[1].compressed_size, b, &uncompressed_size, bigfile->entries[1].fileOffset);
 
     if (b == nullptr)
     {
